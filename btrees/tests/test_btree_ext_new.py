@@ -1,0 +1,382 @@
+import os
+import unittest
+from unittest.mock import patch
+import matplotlib.pyplot as plt
+import pandas as pd
+import pytest
+from numpy import random
+
+from btrees import utils
+from btrees.btree_base import SAMPLING_METHODS, DUMMIES_SAMPLING_METHODS, TEST_STATS_ITER_LOOPS
+from btrees import btree_sampling_distribution_oriented
+from build_tree import build_tree
+from build_tree.build_tree import ALPHABET, overriding_btree_max_leaf_size, generate_zipf_dist, \
+    generate_zipf_dist_in_random_order, _pad_numeric_value, _unpad_numeric_value
+from BTrees.OOBTree import OOBTreePy
+
+from btrees.btree_ext import OOBTreeExt
+from btrees import common
+
+a = OOBTreeExt()
+
+MAX_INTERNAL_SIZE = 5
+MAX_LEAF_SIZE = 5
+
+
+CSV_FIELDS = {"sample_size", "p_value", "ks_stats", "name", "start_time", "sampled_values_counter",
+        "running_time", "reject_counter", "max_leaf_size", "max_internal_size", "btree_size",
+        "btree_height", "distinct_values_error", "skew_factor", "domain_size" , "data_generation_method", "btree_id",
+              "dist_equality_score", "kl_divergence", "purity_score", "btree_code_version", "anderson_dar_significant", "anderson_dar_stats",
+              "real_data_distribution_top" , "revisit_paths"}
+MANDATORY_FIELDS = CSV_FIELDS - {"p_value", "reject_counter", "skew_factor", "domain_size"}
+
+@pytest.fixture(autouse=True)
+def mock_csv_location():
+    new_csv_location = common.SAMPLING_TESTS_CSV + '_unit_tests'
+    with patch.object(common, 'SAMPLING_TESTS_CSV', new_csv_location):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def clean_global_cache():
+    btree_sampling_distribution_oriented.FANOUT_DISTRIBUTION_CACHE={}
+
+
+@pytest.fixture(autouse=True)
+def remove_csv_file():
+    assert 'unit_tests' in common.SAMPLING_TESTS_CSV
+    if os.path.exists(common.SAMPLING_TESTS_CSV):
+        os.remove(common.SAMPLING_TESTS_CSV)
+
+
+def test_oklen_sanity():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert len(my_index.sample_olken(sample_size)) == sample_size
+
+@unittest.skip("btwrs not in used for final paper")
+def test_btwrs_sanity():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert len(my_index.sample_btwrs(sample_size)) == sample_size
+
+def test_monkey_sample():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert len(my_index.sample_monkey(sample_size)) == sample_size
+
+def test_naive_random_walk_sanity():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert len(my_index.sample_naive_random_walk(sample_size)) == sample_size
+
+    sampled_path_key_tuples = list(my_index.sampled_paths.keys())[0]
+    sample_name, sample_size = sampled_path_key_tuples
+    relevant_sampled_path = my_index.sampled_paths[sampled_path_key_tuples][0]
+    assert len(relevant_sampled_path) == sample_size
+
+def test_all_sampling_methods_write_to_csv_with_all_metadata__also_dummies():
+    my_index = _generate_3_height_btree()
+    my_index.run_all_samples(k=1, iterations=1, run_also_dummies=True)
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+
+    expected_sampling_methods = len(SAMPLING_METHODS) + len(DUMMIES_SAMPLING_METHODS)
+
+    assert len(csv) == expected_sampling_methods
+
+    assert all([len(csv[field].notnull()) == expected_sampling_methods for field in MANDATORY_FIELDS])
+
+
+def test_sampling__sanity_for_anderson_darling():
+    k_which_anderson_skip = 1
+    expected_significant_level = [0.25, 0.25]
+    k = 3
+    assert k > k_which_anderson_skip
+    my_index = _generate_3_height_btree()
+    my_index.run_sample_methods(k, iterations=1, sampling_methods=['sample_olken', 'sample_olken_early_abort'])
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+    anderson_darling_stats_column = csv['anderson_dar_stats'].to_list()
+    anderson_dar_significant_column = csv['anderson_dar_significant'].to_list()
+
+    assert len(anderson_darling_stats_column)
+    assert all(isinstance(x, float) for x in anderson_darling_stats_column)
+
+    assert anderson_dar_significant_column == expected_significant_level
+
+
+def test_all_sampling_methods_write_to_csv_with_all_metadata():
+    my_index = _generate_3_height_btree()
+    my_index.run_all_samples(k=1, iterations=1)
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+
+    assert len(csv) == len(SAMPLING_METHODS)
+
+    assert all([len(csv[field].notnull()) == len(SAMPLING_METHODS) for field in MANDATORY_FIELDS])
+
+
+def test_btwrs_vs_olken_higher_prob():
+    my_index = _generate_3_height_btree()
+    with patch.object(random, 'randint', return_value=0):
+        _, olken_prob, olken_path = my_index._olken_walk_toward_bucket(node=my_index)
+        _, btwrs_prob, btwrs_path = my_index._btwrs_walk_toward_bucket(node=my_index)
+
+    assert olken_path == btwrs_path == [0, 0, 0]
+
+    # assert btwrs_prob > olken_prob
+
+def test_ours_height_three_sanity():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    sampled_dist_oritented = my_index.sample_distribution_oriented_height_three(sample_size)
+    assert len(sampled_dist_oritented) == sample_size
+
+    sampled_path_key_tuples = list(my_index.sampled_paths.keys())[0]
+    sample_name, sample_size = sampled_path_key_tuples
+    relevant_sampled_path = my_index.sampled_paths[sampled_path_key_tuples][0]
+    assert len(relevant_sampled_path) == sample_size
+
+def test_dataframe_to_histogram():
+    df_dataset = {"sampled_values_counter": "[('', 247), ('gggg', 117), ('hhhh', 77), ('mmmm', 53), ('rrrr', 6)]",
+                  "sample_size":1, "btree_size":1, "name":"olken", "btree_height":3, "max_leaf_size":3}
+    df = pd.DataFrame([df_dataset] * 4 )
+
+    with patch.object(plt, 'show'):
+        utils.dataframe_to_histogram(df)
+
+def test_olken__early_abort_sanity():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert len(my_index.sample_olken_early_abort(sample_size)) == sample_size
+
+
+def _generate_3_height_btree():
+    # mocking BTrees/OOBTree.py:276
+    # todo: change it to mocking, as it's not safe
+    # OOBTreeExt.max_leaf_size = MAX_LEAF_SIZE
+    # OOBTreeExt.max_internal_size = MAX_INTERNAL_SIZE
+    with overriding_btree_max_leaf_size(max_leaf_size=MAX_LEAF_SIZE), patch.object(
+        OOBTreePy, "max_internal_size", MAX_INTERNAL_SIZE
+    ):
+        my_index = OOBTreeExt()
+        my_index.has_key("a")
+        for i, c in enumerate(ALPHABET):
+            my_index[i] = c
+
+    assert isinstance(
+        my_index._data[0].child._data[0].child, my_index._bucket_type
+    ), "3 height btree must arrive to bucket after wo steps"
+
+    my_index._data_generation_method = 'test'
+    return my_index
+
+def test_btree_generation__custom_leaf_size_zipf_dist():
+    max_leaf_size = 10
+
+    wide_leaf_index = build_tree.generate_zipf_dist_custom_leaf(
+        num_of_values=50, domain_size=50, skew_factor=0, leaf_size=max_leaf_size)
+    assert wide_leaf_index._real_max_leaf_size == max_leaf_size
+    assert all(bucket.size <= max_leaf_size for bucket in _iter_buckets(wide_leaf_index))
+
+
+
+def test_btree_generation__custom_leaf_size():
+    prefix_to_percent = {"gggg": 0.53, "": 0.47}
+    max_leaf_size = 14
+    with overriding_btree_max_leaf_size(max_leaf_size=max_leaf_size):
+        my_index = build_tree.generate_btree_index_x_values_with_dist(
+            num_of_values=5000, disired_prefix_to_percent_dist=prefix_to_percent
+        )
+
+    assert all(bucket.size <= max_leaf_size for bucket in _iter_buckets(my_index))
+    bucket = my_index._firstbucket
+    assert bucket.size <= max_leaf_size
+    while bucket._next:
+        assert bucket.size <= max_leaf_size
+        bucket = bucket._next
+
+def _iter_buckets(index):
+    bucket = index._firstbucket
+    yield bucket
+    while bucket._next:
+        bucket = bucket._next
+        yield bucket
+
+def _generate_4_height_btree():
+    my_index = OOBTreeExt()
+    my_index.max_internal_size = 3
+    my_index.max_leaf_size = 3
+    my_index.has_key("a")
+    for i, c in enumerate(ALPHABET * 3):
+        my_index[i] = c
+
+    assert isinstance(
+        my_index._data[0].child._data[0].child._data[0].child, my_index._bucket_type
+    ), "4 height btree must arrive to bucket after wo steps"
+    my_index._data_generation_method = 'test'
+    return my_index
+
+
+def test_sample_distribution_height_four():
+    sample_size = 3
+    my_index = _generate_4_height_btree()
+    my_index._data_generation_method = 'test'
+    sampled_values = my_index.sample_distribution_oriented_height_four(sample_size)
+    assert len(sampled_values) == sample_size
+
+    sampled_path_key_tuples = list(my_index.sampled_paths.keys())[0]
+    sample_name, sample_size = sampled_path_key_tuples
+    relevant_sampled_path = my_index.sampled_paths[sampled_path_key_tuples][0]
+    assert len(relevant_sampled_path) == sample_size
+
+
+def test_ours_height_four__walk_to_determine_root_coefs():
+    my_index = _generate_4_height_btree()
+    coef = my_index._first_walk_to_determine_root_coefs()
+
+    assert sum(coef) == 1
+
+
+def test_persisting_stats():
+    my_index = _generate_3_height_btree()
+    my_index.sample_olken(1)
+    my_index.sample_distribution_oriented_height_three(1)
+
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+    assert len(csv) == 2
+    assert set(csv.columns) == CSV_FIELDS
+
+def test_get_height():
+    my_index = _generate_4_height_btree()
+    assert my_index._get_height() == 4
+
+
+def test_distinct_values_estimator():
+    my_index = _generate_3_height_btree()
+    my_index.update({key:value for key, value in enumerate(list(iter('aaabbbccddddd')) * 20, 100)})
+    # continue from here, check alg validation
+    sample_size = 30
+    sampled_tuples = my_index.sample_distribution_oriented_height_four(sample_size)
+    sampled_values = [x[1] for x in sampled_tuples]
+    distinct_values_metric = my_index._distinct_values_error_metric(sampled_values, sample_size)
+    assert distinct_values_metric > 0
+
+    distinct_values_metric_on_entire_data = my_index._distinct_values_error_metric(my_index.values(), sample_size)
+    assert distinct_values_metric > distinct_values_metric_on_entire_data
+
+def test_run_all_samples__sanity():
+    my_index = _generate_4_height_btree()
+    my_index._data_generation_method = 'test'
+    my_index.run_all_samples(1,1)
+    assert my_index._data_generation_method == 'test'
+
+def test_generate_zipf_dist_random_order__sanity():
+    my_index_uniform = generate_zipf_dist_in_random_order(num_of_values=50, domain_size=50, skew_factor=0)
+    my_index_skewed = generate_zipf_dist_in_random_order(num_of_values=50, domain_size=50, skew_factor=0.9)
+    assert set(my_index_uniform.values()) > set(my_index_skewed.values())
+
+
+def test_generate_zipf_dist_random_order__btree_order_correct_with_padding():
+    my_index = generate_zipf_dist_in_random_order(num_of_values=50, domain_size=50, skew_factor=0)
+
+    ordered_query = list(my_index.itervalues())
+    assert ordered_query == sorted(ordered_query)
+
+
+# def test_generate_zipf_dist__sanity():
+#     my_index_uniform = generate_zipf_dist(num_of_values=50, domain_size=50, skew_factor=0)
+#     my_index_skewed = generate_zipf_dist(num_of_values=500, domain_size=50, skew_factor=0.9)
+#     assert set(my_index_uniform.values()) > set(my_index_skewed.values())
+
+
+def test_all_samples_protected_from_big_k_size():
+    my_index = OOBTreeExt()
+    my_index._data_generation_method = 'test'
+    my_index.update({'a':1})
+    assert my_index.size == 1
+    my_index.run_all_samples(k=2)
+    my_index._data_generation_method = 'test'
+    assert True, 'otherwise, never finish'
+
+def test_calculate_avg_ks_test():
+    my_index = generate_zipf_dist_in_random_order(num_of_values=50, domain_size=50, skew_factor=0)
+    with patch.object(my_index, '_calculate_avg_ks_test', wraps=my_index._calculate_avg_ks_test) as spy_avg_ks,\
+        patch.object(my_index, '_calculate_ks_test', wraps=my_index._calculate_ks_test) as spy_ks:
+        my_index.sample_distribution_oriented_height_four(1)
+        assert spy_avg_ks.assert_called_once
+        assert spy_ks.call_count == TEST_STATS_ITER_LOOPS
+        force_train_params = [x[-1] for x in spy_ks.call_args_list]
+        assert force_train_params == [{'force_new_np_sample': True}] * TEST_STATS_ITER_LOOPS
+
+
+def test_calculate_anderson_ks_test():
+    my_index = generate_zipf_dist_in_random_order(num_of_values=50, domain_size=50, skew_factor=0)
+    with patch.object(my_index, '_calc_anderson_darling_averaging_x_times',
+                      wraps=my_index._calc_anderson_darling_averaging_x_times) as spy_avg_anderson,\
+        patch.object(my_index, '_calc_anderson_darling', wraps=my_index._calc_anderson_darling) as spy_anderson:
+        my_index.sample_distribution_oriented_height_four(5)
+        assert spy_avg_anderson.assert_called_once
+        assert spy_anderson.call_count == TEST_STATS_ITER_LOOPS
+        force_train_params = [x[-1] for x in spy_anderson.call_args_list]
+        assert force_train_params == [{'force_new_np_sample': True}] * TEST_STATS_ITER_LOOPS
+
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+    assert csv.anderson_dar_significant[0] > 0
+    assert abs(csv.anderson_dar_stats[0]) > 0
+
+
+def test_pad_numeric_value__sanity():
+    arbitrary_numbers = [100, 0, 3782, 999_999, 10_000_000]
+    sorted_arbitrary_numbers = sorted(arbitrary_numbers)
+    sorted_padded_numbers = sorted(map(_pad_numeric_value, arbitrary_numbers))
+
+    unpadded_values = list(map(_unpad_numeric_value, sorted_padded_numbers))
+    assert unpadded_values == sorted_arbitrary_numbers
+
+def test_pad_numeric_value__equal_values():
+    arbitrary_numbers = [100, 100]
+    padded_numbers = list(map(_pad_numeric_value, arbitrary_numbers))
+    assert len(set(padded_numbers)) == 2
+
+    unpadded_values = list(map(_unpad_numeric_value, padded_numbers))
+    assert set(unpadded_values) == {100,}
+
+def test_olken_save_all_accept_reject_probs():
+    sample_size = 3
+    my_index = _generate_3_height_btree()
+    assert not my_index._accept_reject_probs
+    my_index.sample_olken(sample_size)
+    assert my_index._accept_reject_probs
+
+    last_probs = my_index._accept_reject_probs.copy()
+
+    my_index.sample_olken(sample_size)
+    assert my_index._accept_reject_probs
+    assert my_index._accept_reject_probs[:len(last_probs)] != last_probs
+
+
+def test_iter_btree_level():
+    prefix_to_percent = {"gggg": 0.53, "": 0.47}
+    my_index = build_tree.generate_btree_index_x_values_with_dist(
+        num_of_values=50_000, disired_prefix_to_percent_dist=prefix_to_percent
+    )
+    a = utils.iter_btree_level(my_index,2)
+    pass
+
+def test_build_root_coef_height_4_duration():
+    # we have bug with build height-4 in test, and for the purpose of this test,
+    # it doesn't realy matter if it's actually height4.
+    my_index = _generate_3_height_btree()
+    assert my_index.root_probs_coefs is None
+    my_index.determine_root_coefs()
+    assert isinstance(my_index.root_coef_height_4_duration, int)
+
+def test_persisting_stats_revisit_counter():
+    # taking a risk that it's flaky, because it's the easiest
+    my_index = _generate_3_height_btree()
+    for i in range(5):
+        my_index.sample_olken_early_abort(10)
+        my_index.sample_distribution_oriented_height_three(10)
+    csv = pd.read_csv(common.SAMPLING_TESTS_CSV)
+    assert (csv[csv['name'] =='olken_early_abort'].revisit_paths > 0).any()
+    assert (csv[csv['name'] =='distribution_oriented_height_three'].revisit_paths > 0).any()
+
