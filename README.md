@@ -33,13 +33,13 @@ index = build_tree.generate_btree_index_x_values_with_dist(num_of_values=1_000_0
 For sampling for the B+Tree, need to call one of the next methods, each one implementing another method for sampling data from a B+Tree:
 
 ```
-# index_h3 is a B+Tree with 1_000_000 values, which is a B+Tree of height 3
+# index_h3 is a B+Tree with 1_000_000 values, which in our case is a B+Tree of height 3
 sampled_data = index_h3.sample_distribution_oriented_height_three(k=10_000)
 sampled_data = index_h3.sample_olken_early_abort(k=10_000)
 sampled_data = index_h3.sample_olken(k=10_000)
 sampled_data = index_h3.sample_naive_random_walk(k=10_000)
 sampled_data = index_h3.sample_btwrs(k=10_000)
 
-# index_h4 is a B+Tree with 3_000_000 values, which is a B+Tree of height 3
+# index_h4 is a B+Tree with 3_000_000 values, which in our case is a B+Tree of height 4
 sampled_data = index_h4.sample_distribution_oriented_height_four(k=10_000)
 ```
