@@ -1,10 +1,10 @@
 # efficient_sampling
-This project implement advanced method for effieicnt sampling from B+Trees. \\
-For that, we use (B+Trees)[https://pypi.org/project/BTrees/] open source (the "PURE\_PYTHON" version), and implemented the different method over it.
+This project implements an advanced method for efficient sampling from B+ Trees.\\
+We use the open-source (B+Trees)[https://pypi.org/project/BTrees/] open source (the "PURE\_PYTHON" version), nd implement different methods on top of it.
 
 ### Theoretical background
-This code were used for a research on databases sampling (i.e B+Trees).
-More theoretical background will be added soon.
+This code was used for research on database sampling (i.e., B+ Trees).
+
 
 ## B+Trees creation
 ### B+Tree Zipfian Data Distribution
@@ -30,8 +30,7 @@ index = build_tree.generate_btree_index_x_values_with_dist(num_of_values=1_000_0
 ```
 
 ## Sampling
-For sampling for the B+Tree, need to call one of the next methods, each one implementing another method for sampling data from a B+Tree:
-
+For sampling from the B+ Tree, you need to call one of the following methods, each implementing a different approach for sampling data from a B+ Tree:
 ```
 # index_h3 is a B+Tree with 1_000_000 values, which in our case is a B+Tree of height 3
 sampled_data = index_h3.sample_distribution_oriented_height_three(k=10_000)
